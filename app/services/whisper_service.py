@@ -7,12 +7,36 @@ import time
 from app.config import Config
 from typing import List
 import types
+import subprocess
+import uuid
+import wave
+import contextlib
+#import webrtcvad
+import numpy as np
+import soundfile as sf
+import librosa
+import noisereduce as nr
+from app.services.translation_service import translate_text
 
 logger = logging.getLogger(__name__)
 
 # Global model cache with memory management
 _model_cache = {}
 _model_load_times = {}
+
+# Whisper Model Seçenekleri:
+#
+# | Boyut   | İngilizce Model   | Çok Dilli Model | VRAM   | Hız (göreceli) |
+# |---------|------------------|-----------------|--------|----------------|
+# | tiny    | tiny.en          | tiny            | ~1 GB  | ~10x           |
+# | base    | base.en          | base            | ~1 GB  | ~7x            |
+# | small   | small.en         | small           | ~2 GB  | ~4x            |
+# | medium  | medium.en        | medium          | ~5 GB  | ~2x            |
+# | large   | N/A              | large           | ~10 GB | ~1x            |
+# | turbo   | N/A              | turbo           | ~6 GB  | ~8x            |
+#
+# Not: Türkçe ve diğer diller için mutlaka çok dilli model (tiny, base, small, medium, large, turbo) seçilmelidir.
+DEFAULT_WHISPER_MODEL = "large"
 
 def format_srt_time(seconds: float) -> str:
     """Format seconds to SRT timestamp format (HH:MM:SS,mmm)"""
@@ -22,7 +46,7 @@ def format_srt_time(seconds: float) -> str:
     millis = int((seconds % 1) * 1000)
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
-def get_whisper_model(model_size="base"):
+def get_whisper_model(model_size=DEFAULT_WHISPER_MODEL):
     """Get or create a cached Whisper model with memory management"""
     current_time = time.time()
     
@@ -66,104 +90,96 @@ def get_attr(obj, key, default=None):
         return obj.get(key, default)
     return getattr(obj, key, default)
 
-def transcribe(video_path: str, model_name: str = "small.en") -> str:
-    """Transcribe video using Whisper model"""
+def transcribe(video_path: str, model_size: str = DEFAULT_WHISPER_MODEL, target_lang: str = None) -> str:
+    """
+    1. Orijinal dilde transkript ve segmentasyon (Whisper, task='transcribe', language=None ile otomatik tespit)
+    2. Her segmentin metnini target_lang'e çevir (ör. Google Translate API, OpenAI, vs.)
+    3. Segment zamanlamaları orijinalden alınır, sadece metinler çevrilir.
+    """
+    if target_lang is None:
+        raise ValueError("target_lang parametresi zorunludur ve kullanıcıdan alınmalıdır!")
     try:
-        logger.info(f"Starting transcription for video {os.path.basename(video_path)} with model {model_name}")
-        
-        # Load model
-        model = get_whisper_model(model_name)
-        
-        # Transcribe with maximum sensitivity settings for better audio detection
-        # OpenAI Whisper compatible parameters with ultra-low thresholds
+        logger.info(f"Starting transcription for video {os.path.basename(video_path)} with model {model_size}")
+        video_id = os.path.splitext(os.path.basename(video_path))[0]
+        wav_path = f"outputs/{video_id}_input.wav"
+        cleaned_wav_path = f"outputs/{video_id}_cleaned.wav"
+        subprocess.run([
+            "ffmpeg", "-y", "-i", video_path, "-ar", "16000", "-ac", "1", wav_path
+        ], check=True)
+        y, sr = librosa.load(wav_path, sr=None)
+        reduced_noise = nr.reduce_noise(y=y, sr=sr)
+        sf.write(cleaned_wav_path, reduced_noise, sr)
+        model = get_whisper_model(model_size)
+        # 1. Orijinal dilde transkript ve segmentasyon
         result = model.transcribe(
-            video_path,
-            language=None,  # Auto-detect language
+            cleaned_wav_path,
+            task="transcribe",  # Orijinal dilde transkript
             word_timestamps=True,
-            condition_on_previous_text=False,
-            initial_prompt="This is a video with speech, singing, or music that may start immediately. There might be quiet speech, background music, or singing at any time.",
             temperature=0.0,
-            no_speech_threshold=0.01,  # Ultra-low threshold for maximum sensitivity
-            compression_ratio_threshold=3.0,  # Higher threshold to allow more variations
-            logprob_threshold=-2.0  # Lower threshold to catch more speech
+            no_speech_threshold=0.3,
+            logprob_threshold=-1.0,
+            compression_ratio_threshold=2.4,
+            condition_on_previous_text=False
+            # language parametresi verilmedi, Whisper kendi tespit edecek
         )
-
-        # Extract segments from result
         segments = result.get("segments", [])
-        
-        logger.info(f"Raw transcription result - segments found: {len(segments)}")
-        logger.info(f"Transcription text: {result.get('text', '')[:200]}...")
-        
-        if not segments:
-            logger.warning("No segments found in transcription. Audio might be too quiet or silent.")
-            # Create a minimal segment to avoid empty SRT
-            segments = [{
-                'start': 0.0,
-                'end': 5.0,
-                'text': '[No speech detected]'
-            }]
-
-        # Filter out empty segments and validate content
+        source_lang = result.get('language', 'auto')
+        logger.info(f"Whisper detected language: {source_lang}, user requested: {target_lang}")
+        PROMPT_PHRASES = [
+            "This is a video with speech, singing, or music that may start immediately.",
+            "There might be quiet speech, background music, or singing at any time.",
+            "[Background music or quiet speech]"
+        ]
         valid_segments = []
         for segment in segments:
             segment_text = get_attr(segment, "text", "").strip()
-            if segment_text and len(segment_text) > 0:
-                # Convert segment to dict format
-                seg_dict = {
-                    'start': get_attr(segment, 'start', 0),
-                    'end': get_attr(segment, 'end', 0),
-                    'text': segment_text
-                }
-                valid_segments.append(seg_dict)
-                logger.info(f"Valid segment: {segment_text[:100]}...")
+            if not segment_text or all(c in '.!?,…- ' for c in segment_text) or any(phrase in segment_text for phrase in PROMPT_PHRASES):
+                logger.debug(f"Skipping prompt/placeholder segment: {segment_text}")
+                continue
+            # Eğer kaynak dil ve hedef dil aynıysa çeviri yapmadan ekle
+            if source_lang == target_lang:
+                logger.info(f"No translation needed: Whisper output will be used as-is for {source_lang}")
+                translated_text = segment_text
             else:
-                logger.debug(f"Skipping empty segment: {segment_text}")
-
+                logger.info(f"Translating segment from {source_lang} to {target_lang}")
+                translated_text = translate_text(segment_text, source_lang, target_lang)
+            seg_dict = {
+                'start': get_attr(segment, 'start', 0),
+                'end': get_attr(segment, 'end', 0),
+                'text': translated_text
+            }
+            valid_segments.append(seg_dict)
+            logger.info(f"Valid segment: {translated_text[:100]}...")
         if not valid_segments:
             logger.warning("No valid segments found in transcription. Audio might be too quiet or silent.")
-            # Create a minimal segment to avoid empty SRT
             valid_segments = [{
                 'start': 0.0,
                 'end': 5.0,
                 'text': '[No speech detected]'
             }]
-        
-        # Sort segments by start time and fix overlapping
         valid_segments.sort(key=lambda x: x['start'])
-        
-        # Fix overlapping segments with more aggressive gap filling
         final_segments = []
         for i, segment in enumerate(valid_segments):
             start_time = segment['start']
             end_time = segment['end']
-            
-            # Ensure minimum duration (reduced for better sensitivity)
             if end_time - start_time < 0.3:
                 end_time = start_time + 0.3
-            
-            # Check for overlap with previous segment
             if final_segments:
                 prev_end = final_segments[-1]['end']
                 if start_time < prev_end:
-                    # Adjust start time to avoid overlap (reduced gap)
                     start_time = prev_end + 0.05
                     end_time = max(end_time, start_time + 0.3)
-            
             final_segments.append({
                 'start': start_time,
                 'end': end_time,
                 'text': segment['text']
             })
-        
-        # Check for large gaps and add placeholder segments for quiet periods
         final_segments_with_gaps = []
         for i, segment in enumerate(final_segments):
             if i > 0:
                 prev_end = final_segments[i-1]['end']
                 current_start = segment['start']
                 gap = current_start - prev_end
-                
-                # If there's a gap larger than 3 seconds, add a placeholder
                 if gap > 3.0:
                     placeholder_start = prev_end + 0.1
                     placeholder_end = current_start - 0.1
@@ -173,18 +189,24 @@ def transcribe(video_path: str, model_name: str = "small.en") -> str:
                             'end': placeholder_end,
                             'text': '[Background music or quiet speech]'
                         })
-            
             final_segments_with_gaps.append(segment)
-        
+        cleaned_segments = []
+        for seg in final_segments_with_gaps:
+            duration = seg['end'] - seg['start']
+            text = seg['text'].strip()
+            if duration < 1.0:
+                continue
+            if not text or all(c in '.!?,…- ' for c in text):
+                continue
+            cleaned_segments.append(seg)
+        if not cleaned_segments:
+            cleaned_segments = final_segments_with_gaps
         output_dir = os.path.join("outputs")
         os.makedirs(output_dir, exist_ok=True)
-        
         srt_path = os.path.join(output_dir, f"{os.path.splitext(os.path.basename(video_path))[0]}.srt")
-        write_srt(final_segments_with_gaps, srt_path)
-        
+        write_srt(cleaned_segments, srt_path)
         logger.info(f"Transcription completed and saved to {srt_path}")
-        logger.info(f"Generated {len(final_segments_with_gaps)} segments with content")
-        
+        logger.info(f"Generated {len(cleaned_segments)} segments with content")
     except Exception as e:
         logger.error(f"Transcription failed for video {os.path.basename(video_path)}: {str(e)}")
         raise
@@ -286,3 +308,133 @@ def write_srt(segments: List[dict], output_path: str):
             f.write(f"{i}\n")
             f.write(f"{start_time} --> {end_time}\n")
             f.write(f"{text}\n\n")
+
+def transcribe_with_openai_whisper(video_path: str, target_lang: str, model_size: str = DEFAULT_WHISPER_MODEL) -> str:
+    """OpenAI Whisper ile transkripsiyon ve çeviri"""
+    return transcribe(video_path, model_size=model_size, target_lang=target_lang)
+
+def transcribe_with_faster_whisper(video_path: str, target_lang: str, model_size: str = DEFAULT_WHISPER_MODEL) -> str:
+    """Faster-Whisper ile transkripsiyon ve çeviri (otomatik GPU/CPU fallback ve compute_type seçimi ile)"""
+    from faster_whisper import WhisperModel
+    import numpy as np
+    import soundfile as sf
+    import librosa
+    import noisereduce as nr
+    import os
+    import torch
+
+    # Otomatik cihaz ve compute_type seçimi
+    if torch.cuda.is_available() and Config.ENABLE_GPU_ACCELERATION:
+        device = "cuda"
+        compute_type = "float16"
+    else:
+        device = "cpu"
+        compute_type = "int8"  # CPU için en hızlı ve düşük bellekli seçenek
+    logger.info(f"[Faster-Whisper] Using device: {device}, compute_type: {compute_type}")
+
+    logger.info(f"[Faster-Whisper] Starting transcription for {video_path} with model {model_size}")
+    video_id = os.path.splitext(os.path.basename(video_path))[0]
+    wav_path = f"outputs/{video_id}_input.wav"
+    cleaned_wav_path = f"outputs/{video_id}_cleaned.wav"
+    # Sesi wav'a çevir
+    subprocess.run([
+        "ffmpeg", "-y", "-i", video_path, "-ar", "16000", "-ac", "1", wav_path
+    ], check=True)
+    y, sr = librosa.load(wav_path, sr=None)
+    reduced_noise = nr.reduce_noise(y=y, sr=sr)
+    sf.write(cleaned_wav_path, reduced_noise, sr)
+    # Model yükle
+    model = WhisperModel(model_size, device=device, compute_type=compute_type)
+    segments, info = model.transcribe(
+        cleaned_wav_path,
+        beam_size=5,
+        vad_filter=True,
+        vad_parameters=dict(min_silence_duration_ms=500),
+        word_timestamps=True,
+        language=None,
+        task="transcribe"
+    )
+    source_lang = info.get('language', 'auto')
+    logger.info(f"[Faster-Whisper] Detected language: {source_lang}, user requested: {target_lang}")
+    PROMPT_PHRASES = [
+        "This is a video with speech, singing, or music that may start immediately.",
+        "There might be quiet speech, background music, or singing at any time.",
+        "[Background music or quiet speech]"
+    ]
+    valid_segments = []
+    for segment in segments:
+        segment_text = segment.text.strip() if hasattr(segment, 'text') else str(segment)
+        if not segment_text or all(c in '.!?,…- ' for c in segment_text) or any(phrase in segment_text for phrase in PROMPT_PHRASES):
+            logger.debug(f"[Faster-Whisper] Skipping prompt/placeholder segment: {segment_text}")
+            continue
+        # Eğer kaynak dil ve hedef dil aynıysa çeviri yapmadan ekle
+        if source_lang == target_lang:
+            logger.info(f"[Faster-Whisper] No translation needed: output will be used as-is for {source_lang}")
+            translated_text = segment_text
+        else:
+            logger.info(f"[Faster-Whisper] Translating segment from {source_lang} to {target_lang}")
+            translated_text = translate_text(segment_text, source_lang, target_lang)
+        seg_dict = {
+            'start': segment.start,
+            'end': segment.end,
+            'text': translated_text
+        }
+        valid_segments.append(seg_dict)
+        logger.info(f"[Faster-Whisper] Valid segment: {translated_text[:100]}...")
+    if not valid_segments:
+        logger.warning("[Faster-Whisper] No valid segments found in transcription. Audio might be too quiet or silent.")
+        valid_segments = [{
+            'start': 0.0,
+            'end': 5.0,
+            'text': '[No speech detected]'
+        }]
+    valid_segments.sort(key=lambda x: x['start'])
+    final_segments = []
+    for i, segment in enumerate(valid_segments):
+        start_time = segment['start']
+        end_time = segment['end']
+        if end_time - start_time < 0.3:
+            end_time = start_time + 0.3
+        if final_segments:
+            prev_end = final_segments[-1]['end']
+            if start_time < prev_end:
+                start_time = prev_end + 0.05
+                end_time = max(end_time, start_time + 0.3)
+        final_segments.append({
+            'start': start_time,
+            'end': end_time,
+            'text': segment['text']
+        })
+    final_segments_with_gaps = []
+    for i, segment in enumerate(final_segments):
+        if i > 0:
+            prev_end = final_segments[i-1]['end']
+            current_start = segment['start']
+            gap = current_start - prev_end
+            if gap > 3.0:
+                placeholder_start = prev_end + 0.1
+                placeholder_end = current_start - 0.1
+                if placeholder_end > placeholder_start:
+                    final_segments_with_gaps.append({
+                        'start': placeholder_start,
+                        'end': placeholder_end,
+                        'text': '[Background music or quiet speech]'
+                    })
+        final_segments_with_gaps.append(segment)
+    cleaned_segments = []
+    for seg in final_segments_with_gaps:
+        duration = seg['end'] - seg['start']
+        text = seg['text'].strip()
+        if duration < 1.0:
+            continue
+        if not text or all(c in '.!?,…- ' for c in text):
+            continue
+        cleaned_segments.append(seg)
+    if not cleaned_segments:
+        cleaned_segments = final_segments_with_gaps
+    output_dir = os.path.join("outputs")
+    os.makedirs(output_dir, exist_ok=True)
+    srt_path = os.path.join(output_dir, f"{os.path.splitext(os.path.basename(video_path))[0]}.srt")
+    logger.info(f"[Faster-Whisper] Transcription completed and saved to {srt_path}")
+    logger.info(f"[Faster-Whisper] Generated {len(cleaned_segments)} segments with content")
+    return srt_path

@@ -140,7 +140,7 @@ curl -X GET "http://localhost:8082/api/v1/status/system/storage"
 ```
 
 ### Performans Metrikleri
-Son 100 log satırından upload, işleme, hata ve başarı sayısını döner.
+Son 100 satır, en güncel log dosyasından dinamik olarak alınır.
 
 ```bash
 curl -X GET "http://localhost:8082/api/v1/status/system/performance"
@@ -256,7 +256,7 @@ fetch('http://localhost:8082/api/v1/upload/', {
     "filename": "video_subtitled.mp4",
     "size_mb": 45.2,
     "storage_url": "/storage/550e8400-e29b-41d4-a716-446655440000/video_subtitled.mp4",
-    "download_url": "/api/v1/download/550e8400-e29b-41d4-a716-446655440000",
+    "download_url": "/api/v1/status/download/550e8400-e29b-41d4-a716-446655440000",
     "status": "uploaded"
   }
 }
@@ -459,7 +459,7 @@ Yok
 ## /api/v1/status/system/performance [GET]
 
 **Açıklama:**  
-Son 100 log satırından upload, işleme, hata ve başarı sayısını döner.
+Son 100 satır, en güncel log dosyasından dinamik olarak alınır.
 
 **Girdi:**  
 Yok
@@ -595,3 +595,5 @@ Yok
 ```
 
 --- 
+
+# Boolean ayarlar için: "true", "1", "yes", "on" değerleri True; "false", "0", "no", "off" değerleri False olarak algılanır. 

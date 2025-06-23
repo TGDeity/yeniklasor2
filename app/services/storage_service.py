@@ -58,7 +58,7 @@ def upload_to_storage(file_path: str, video_id: str) -> dict:
             "filename": source_path.name,
             "size_mb": round(file_size, 2),
             "storage_url": f"/storage/{video_id}/{source_path.name}",
-            "download_url": f"/api/v1/download/{video_id}",
+            "download_url": f"/api/v1/status/download/{video_id}",
             "status": "uploaded"
         }
         

@@ -83,6 +83,56 @@ export default function ConfigPanel() {
           ))}
         </Section>
         <Section title="Performans Ayarları">
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
+            <span style={{ fontWeight: 600, fontSize: '1.01rem', color: 'var(--accent)' }}>Performans Parametreleri</span>
+            <div style={{ position: 'relative', display: 'inline-block', marginLeft: 8 }}>
+              <span
+                style={{
+                  display: 'inline-block',
+                  width: 20,
+                  height: 20,
+                  borderRadius: '50%',
+                  background: '#232336',
+                  color: '#fff',
+                  textAlign: 'center',
+                  lineHeight: '20px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                  border: '1.5px solid #444',
+                  fontSize: '1.05rem',
+                  boxShadow: '0 1px 4px #0002'
+                }}
+                tabIndex={0}
+                onMouseEnter={e => e.currentTarget.nextSibling.style.display = 'block'}
+                onMouseLeave={e => e.currentTarget.nextSibling.style.display = 'none'}
+                onFocus={e => e.currentTarget.nextSibling.style.display = 'block'}
+                onBlur={e => e.currentTarget.nextSibling.style.display = 'none'}
+              >i</span>
+              <div
+                style={{
+                  display: 'none',
+                  position: 'absolute',
+                  left: 28,
+                  top: -8,
+                  zIndex: 10,
+                  background: '#232336',
+                  color: '#e0e0e0',
+                  border: '1.5px solid #444',
+                  borderRadius: 7,
+                  padding: '12px 16px',
+                  minWidth: 270,
+                  fontSize: '0.97rem',
+                  lineHeight: 1.6,
+                  boxShadow: '0 2px 12px #0003',
+                  pointerEvents: 'none'
+                }}
+              >
+                <b>enable_gpu_acceleration:</b> GPU hızlandırmayı aktif eder. Açık olduğunda, Whisper ve FFmpeg işlemleri GPU üzerinden çok daha hızlı çalışır.<br/>
+                <b>enable_model_caching:</b> Modellerin bellekte (RAM) tutulmasını sağlar. Açık olduğunda, Whisper ve çeviri modelleri tekrar tekrar yüklenmez, hız artar.<br/>
+                <b>enable_batch_processing:</b> Özellikle altyazı çevirisinde toplu işlem yapar. Açık olduğunda, çok sayıda altyazı satırı bir arada çevrilir ve çeviri işlemi hızlanır.
+              </div>
+            </div>
+          </div>
           {Object.entries(config.performance).map(([key, value]) => (
             <div key={key} style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
               <input className="form-check-input" type="checkbox" id={key} checked={!!value} disabled={saving}

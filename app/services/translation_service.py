@@ -288,80 +288,66 @@ def parse_srt_content(content: str) -> list:
     
     return segments
 
-def translate_subtitles(srt_file: str, target_lang: str = "tr") -> str:
-    """Translate subtitles from source language to target language"""
+def translate_subtitles(srt_file: str, target_lang: str = "tr", source_lang: str = None) -> str:
+    """Translate subtitles from source language to target language. Eğer diller aynıysa çeviri yapılmaz."""
     try:
         with open(srt_file, 'r', encoding='utf-8') as f:
             content = f.read()
-            
         # Split into blocks (each subtitle segment)
         blocks = content.strip().split('\n\n')
         translated_blocks = []
-        
-        # Detect source language from first non-empty subtitle text with sufficient length
-        source_lang = "en"  # Default fallback
-        for block in blocks:
-            lines = block.split('\n')
-            if len(lines) >= 3:  # Valid subtitle block
-                text = ' '.join(lines[2:]).strip()  # Get all text lines
-                # Only try language detection for texts with sufficient length (at least 10 characters)
-                if len(text) >= 10:
-                    try:
-                        detected_lang = detect(text)
-                        if detected_lang and detected_lang != 'un':
-                            source_lang = detected_lang
-                            logger.info(f"Detected source language: {source_lang}")
-                            break
-                    except Exception as e:
-                        logger.debug(f"Language detection failed for text '{text[:50]}...': {str(e)}")
-                        continue
-        
-        # Skip translation if source and target languages are the same
+        # Eğer source_lang parametresi verilmemişse, SRT'den tespit et
+        if not source_lang:
+            source_lang = "en"  # Default fallback
+            for block in blocks:
+                lines = block.split('\n')
+                if len(lines) >= 3:
+                    text = ' '.join(lines[2:]).strip()
+                    if len(text) >= 10:
+                        try:
+                            detected_lang = detect(text)
+                            if detected_lang and detected_lang != 'un':
+                                source_lang = detected_lang
+                                logger.info(f"Detected source language: {source_lang}")
+                                break
+                        except Exception as e:
+                            logger.debug(f"Language detection failed for text '{text[:50]}...': {str(e)}")
+                            continue
+        # Eğer kaynak dil ve hedef dil aynıysa çeviri yapmadan orijinal dosyayı döndür
         if source_lang == target_lang:
-            logger.info("Source and target languages are the same, skipping translation")
+            logger.info(f"Source language {source_lang} matches target language {target_lang}, skipping translation.")
             return srt_file
-            
         # Initialize translator
         translator = GoogleTranslator(source=source_lang, target=target_lang)
-        
         # Process each subtitle block
         for i, block in enumerate(blocks, 1):
             lines = block.split('\n')
-            if len(lines) >= 3:  # Valid subtitle block
+            if len(lines) >= 3:
                 index = lines[0]
                 timing = lines[1]
-                text = ' '.join(lines[2:]).strip()  # Join all text lines
-                
-                # Skip translation for empty or very short texts
+                text = ' '.join(lines[2:]).strip()
                 if not text or len(text) < 2:
                     logger.debug(f"Skipping translation for empty/short text in block {i}")
                     translated_text = text
                 else:
                     try:
-                        # Translate text
                         translated_text = translator.translate(text)
                         if not translated_text:
                             logger.warning(f"Translation returned empty for block {i}, using original text")
                             translated_text = text
                     except Exception as e:
                         logger.warning(f"Translation error in block {i}: {str(e)}")
-                        translated_text = text  # Fallback to original text
-                
-                # Reconstruct subtitle block
+                        translated_text = text
                 translated_block = f"{index}\n{timing}\n{translated_text}\n"
                 translated_blocks.append(translated_block)
             else:
                 logger.debug(f"Invalid subtitle block {i}: {block}")
-                translated_blocks.append(block)  # Keep invalid blocks as is
-        
-        # Write translated subtitles
+                translated_blocks.append(block)
         output_path = os.path.join(os.path.dirname(srt_file), f"{os.path.splitext(os.path.basename(srt_file))[0]}_translated.srt")
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write('\n\n'.join(translated_blocks))
-        
         logger.info(f"Translation completed: {output_path}")
         return output_path
-        
     except Exception as e:
         logger.error(f"Translation failed: {str(e)}")
         return srt_file  # Return original file on error
@@ -383,4 +369,43 @@ def cleanup_translation_cache():
         if model_key in _translation_models:
             del _translation_models[model_key]
         if model_key in _model_load_times:
-            del _model_load_times[model_key] 
+            del _model_load_times[model_key]
+
+def translate_subtitles_to_target(srt_file: str, target_lang: str = "tr") -> str:
+    """
+    Her zaman önce altyazıyı İngilizceye çevirir, ardından İngilizce SRT'den hedef dile çevirir.
+    - Eğer kaynak dil İngilizce ise, doğrudan hedef dile çevirir.
+    - Eğer hedef dil İngilizce ise, sadece İngilizceye çevirip döndürür.
+    """
+    try:
+        with open(srt_file, 'r', encoding='utf-8') as f:
+            content = f.read()
+        # Dil tespiti (ilk anlamlı bloktan)
+        blocks = content.strip().split('\n\n')
+        source_lang = "en"
+        for block in blocks:
+            lines = block.split('\n')
+            if len(lines) >= 3:
+                text = ' '.join(lines[2:]).strip()
+                if len(text) >= 10:
+                    try:
+                        detected_lang = detect(text)
+                        if detected_lang and detected_lang != 'un':
+                            source_lang = detected_lang
+                            break
+                    except Exception:
+                        continue
+        # 1. İngilizceye çeviri gerekiyorsa
+        if source_lang != "en":
+            srt_file_en = translate_subtitles(srt_file, "en")
+        else:
+            srt_file_en = srt_file
+        # 2. Hedef dil İngilizce ise, İngilizce SRT'yi döndür
+        if target_lang == "en":
+            return srt_file_en
+        # 3. İngilizce SRT'den hedef dile çevir
+        srt_file_target = translate_subtitles(srt_file_en, target_lang)
+        return srt_file_target
+    except Exception as e:
+        logger.error(f"translate_subtitles_to_target failed: {str(e)}")
+        return srt_file  # Hata olursa orijinal dosyayı döndür 

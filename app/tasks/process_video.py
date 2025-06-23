@@ -1,5 +1,5 @@
 from app.core.celery_app import celery_app
-from app.services.whisper_service import transcribe, cleanup_model_cache
+from app.services.whisper_service import transcribe_with_openai_whisper, transcribe_with_faster_whisper, cleanup_model_cache
 from app.services.translation_service import translate_subtitles, cleanup_translation_cache
 from app.services.hardsub_service import burn_subtitles
 from app.services.storage_service import upload_to_storage, cleanup_storage
@@ -25,11 +25,11 @@ def cleanup_models():
         logger.warning(f"Model cache cleanup failed: {str(e)}")
 
 @celery_app.task(name="app.tasks.process_video.process_video_task", bind=True, time_limit=3600, soft_time_limit=3000)  # 1 hour hard limit, 50 min soft limit
-def process_video_task(self, video_id: str, video_path: str, target_language: str = "tr") -> dict:
+def process_video_task(self, video_id: str, video_path: str, target_language: str = "tr", model: str = "openai-whisper") -> dict:
     """Process video task that handles transcription, translation and subtitle burning"""
     try:
         # Log task start
-        logger.info(f"Starting video processing for video_id: {video_id}, path: {video_path}, target language: {target_language}")
+        logger.info(f"Starting video processing for video_id: {video_id}, path: {video_path}, target language: {target_language}, model: {model}")
         update_status(video_id, Status.PROCESSING)
         
         # Check if video file exists
@@ -49,8 +49,11 @@ def process_video_task(self, video_id: str, video_path: str, target_language: st
             return {"status": "failed", "error": error_msg}
         
         # Step 1: Transcribe video
-        logger.info(f"Starting transcription for video {video_id}")
-        srt_path = transcribe(str(video_path))
+        logger.info(f"Starting transcription for video {video_id} with model {model}")
+        if model == "faster-whisper":
+            srt_path = transcribe_with_faster_whisper(str(video_path), target_lang=target_language)
+        else:
+            srt_path = transcribe_with_openai_whisper(str(video_path), target_lang=target_language)
         logger.info(f"Transcription completed for video {video_id}: {srt_path}")
         
         # Step 2: Translate subtitles

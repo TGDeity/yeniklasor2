@@ -93,14 +93,16 @@ class ResourceMonitor:
         """Get performance metrics over time"""
         try:
             # Get recent logs for analysis
-            log_file = Path("logs/app_20250621.log")
+            log_dir = Path("logs")
+            log_files = sorted(log_dir.glob("app_*.log"), reverse=True)
+            if not log_files:
+                return {"error": "Log file not found"}
+            log_file = log_files[0]
             if log_file.exists():
-                with open(log_file, 'r') as f:
+                with open(log_file, 'r', encoding='utf-8') as f:
                     lines = f.readlines()
-                
                 # Analyze recent activity
                 recent_lines = lines[-100:]  # Last 100 lines
-                
                 # Count different types of operations
                 metrics = {
                     "upload_count": len([l for l in recent_lines if "upload" in l.lower()]),
@@ -109,10 +111,8 @@ class ResourceMonitor:
                     "success_count": len([l for l in recent_lines if "completed" in l.lower()]),
                     "total_operations": len(recent_lines)
                 }
-                
                 return metrics
             else:
                 return {"error": "Log file not found"}
-                
         except Exception as e:
             return {"error": str(e)} 

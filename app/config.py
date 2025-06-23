@@ -73,6 +73,14 @@ class Config:
         }
         return settings
     
+    @staticmethod
+    def str_to_bool(value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return value != 0
+        return str(value).strip().lower() in ("true", "1", "yes", "on")
+
     @classmethod
     def update_setting(cls, setting_path: str, value: Any) -> bool:
         """Update a configuration setting"""
@@ -81,9 +89,7 @@ class Config:
             parts = setting_path.split(".")
             if len(parts) != 2:
                 return False
-            
             category, setting = parts
-            
             if category == "timeouts":
                 if setting == "ffmpeg":
                     cls.FFMPEG_TIMEOUT = int(value)
@@ -105,19 +111,18 @@ class Config:
                     cls.GPU_MEMORY_LIMIT = int(value) * 1024 * 1024 * 1024
             elif category == "performance":
                 if setting == "enable_gpu_acceleration":
-                    cls.ENABLE_GPU_ACCELERATION = bool(value)
+                    cls.ENABLE_GPU_ACCELERATION = cls.str_to_bool(value)
                 elif setting == "enable_model_caching":
-                    cls.ENABLE_MODEL_CACHING = bool(value)
+                    cls.ENABLE_MODEL_CACHING = cls.str_to_bool(value)
                 elif setting == "enable_batch_processing":
-                    cls.ENABLE_BATCH_PROCESSING = bool(value)
+                    cls.ENABLE_BATCH_PROCESSING = cls.str_to_bool(value)
             elif category == "cleanup":
                 if setting == "auto_cleanup_temp_files":
-                    cls.AUTO_CLEANUP_TEMP_FILES = bool(value)
+                    cls.AUTO_CLEANUP_TEMP_FILES = cls.str_to_bool(value)
                 elif setting == "cleanup_interval_seconds":
                     cls.CLEANUP_INTERVAL = int(value)
                 elif setting == "max_storage_age_days":
                     cls.MAX_STORAGE_AGE = int(value) * 24 * 3600
-            
             return True
         except (ValueError, TypeError):
             return False 

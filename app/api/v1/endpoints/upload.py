@@ -119,6 +119,8 @@ SUPPORTED_LANGUAGES = {
     "zh": "Chinese"
 }
 
+SUPPORTED_MODELS = ["openai-whisper", "faster-whisper"]
+
 def validate_video_file(file: UploadFile) -> bool:
     """Validate uploaded video file"""
     # Check file extension
@@ -145,18 +147,25 @@ async def get_supported_languages():
         "default": "tr"
     }
 
+@router.get("/models")
+async def get_supported_models():
+    """Desteklenen transkripsiyon modellerini döndürür."""
+    return {"models": SUPPORTED_MODELS, "default": "openai-whisper"}
+
 @router.post("/", response_model=UploadResponse)
 async def upload_video(
     file: UploadFile = File(...),
-    target_language: str = Form("tr")
+    target_language: str = Form("tr"),
+    model: str = Form("openai-whisper")
 ):
     """
     Video dosyası yükle ve işleme başlat (altyazı çıkarma, çeviri, hardsub).
 
-    - **Amaç:** Kullanıcıdan bir video dosyası alır, hedef dil seçimiyle işleme başlatır.
+    - **Amaç:** Kullanıcıdan bir video dosyası alır, hedef dil ve model seçimiyle işleme başlatır.
     - **Parametreler:**
         - **file**: Yüklenecek video dosyası (mp4, avi, mov, mkv, wmv, flv, webm)
         - **target_language**: Hedef dil kodu (örn: "tr", "en", "es")
+        - **model**: Kullanılacak transkripsiyon modeli ("openai-whisper" veya "faster-whisper")
     - **Yanıt:**
         - video_id: Yüklenen videoya ait UUID
         - filename: Dosya adı
@@ -164,11 +173,14 @@ async def upload_video(
         - language_name: Hedef dilin adı
         - status: "uploaded"
         - task_id: Arka planda başlatılan işin Celery task id'si
+        - model: Seçilen model
+        - supported_models: Desteklenen modellerin listesi
     - **Örnek İstek:**
         ```bash
         curl -X POST "http://localhost:8082/api/v1/upload/" \
           -F "file=@video.mp4" \
-          -F "target_language=tr"
+          -F "target_language=tr" \
+          -F "model=faster-whisper"
         ```
     - **Örnek Yanıt:**
         ```json
@@ -178,15 +190,19 @@ async def upload_video(
           "target_language": "tr",
           "language_name": "Turkish",
           "status": "uploaded",
-          "task_id": "task-123"
+          "task_id": "task-123",
+          "model": "faster-whisper",
+          "supported_models": ["openai-whisper", "faster-whisper"]
         }
         ```
     - **Hata Kodları:**
-        - 400: Geçersiz dosya veya dil kodu
+        - 400: Geçersiz dosya, dil kodu veya model
         - 413: Dosya boyutu limiti aşıldı
         - 500: Sunucu hatası
     """
-    logger.info(f"Received upload request for file: {file.filename} with target language: {target_language}")
+    logger.info(f"Received upload request for file: {file.filename} with target language: {target_language} and model: {model}")
+    if model not in SUPPORTED_MODELS:
+        raise HTTPException(status_code=400, detail=f"Model '{model}' is not supported. Supported: {SUPPORTED_MODELS}")
     
     try:
         # Validate file type
@@ -230,8 +246,8 @@ async def upload_video(
         logger.info(f"File saved successfully: {file_path} ({len(content)} bytes)")
         
         # Start Celery task
-        logger.info(f"Starting Celery task for video {video_id} with language {target_language}")
-        task = process_video_task.delay(video_id, str(file_path), target_language)
+        logger.info(f"Starting Celery task for video {video_id} with language {target_language} and model {model}")
+        task = process_video_task.delay(video_id, str(file_path), target_language, model)
         logger.info(f"Celery task started: {task.id}")
         
         # Get language name
@@ -243,7 +259,9 @@ async def upload_video(
             target_language=target_language,
             language_name=language_name,
             status="uploaded",
-            task_id=task.id
+            task_id=task.id,
+            model=model,
+            supported_models=SUPPORTED_MODELS
         )
         
     except HTTPException:
