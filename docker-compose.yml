@@ -1,0 +1,115 @@
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    image: video-processor:latest
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./app:/app/app
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+      - ./status:/app/status
+      - ./storage:/app/storage
+      - ./logs:/app/logs
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8082 --reload --workers 1
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONPATH=/app/app
+    networks:
+      - default
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+        limits:
+          memory: 4G
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/api/v1/upload/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  admin:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.admin
+    image: video-admin:latest
+    ports:
+      - "8181:8181"
+    volumes:
+      - ./admin_panel:/admin_panel
+      - ./status:/admin_panel/status
+      - ./logs:/admin_panel/logs
+    command: uvicorn main:app --host 0.0.0.0 --port 8181 --reload
+    environment:
+      - PYTHONPATH=/admin_panel
+      - API_BASE_URL=http://api:8082/api/v1
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  redis:
+    image: redis:6-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: video-worker:latest
+    command: celery -A app.core.celery_app worker --loglevel=info --concurrency=2 --queues=video_processing,default
+    volumes:
+      - ./app:/app/app
+      - ./uploads:/app/uploads
+      - ./outputs:/app/outputs
+      - ./status:/app/status
+      - ./storage:/app/storage
+      - ./logs:/app/logs
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility,video
+      - PYTHONPATH=/app/app
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+        limits:
+          memory: 8G
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "celery", "-A", "app.core.celery_app", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  redis-data:
+    driver: local
