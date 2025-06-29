@@ -1,0 +1,42 @@
+# FastAPI and web framework
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+jinja2==3.1.2
+
+# Task queue and caching
+celery==5.3.4
+redis==5.0.1
+
+# Machine Learning and Audio Processing
+openai-whisper==20231117
+ctranslate2==4.6.0
+faster-whisper
+transformers==4.35.2
+sentencepiece==0.1.99
+langdetect==1.0.9
+deep-translator==1.11.4
+
+# Video processing
+ffmpeg-python==0.2.0
+
+# System monitoring
+psutil==5.9.6
+
+# Utilities
+python-dotenv==1.0.0
+pydantic==2.5.0
+requests==2.31.0
+
+# Added from the code block
+aiofiles==23.2.1
+torch==2.1.1
+torchaudio==2.1.1
+
+# NumPy 1.x for compatibility with Whisper
+numpy<2.0.0
+
+# Audio ayrıştırması için
+noisereduce==3.0.3
+librosa==0.11.0
+soundfile==0.13.1

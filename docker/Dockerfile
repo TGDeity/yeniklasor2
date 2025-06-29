@@ -1,0 +1,44 @@
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.10 \
+    python3-pip \
+    python3.10-dev \
+    build-essential \
+    wget \
+    cmake \
+    ffmpeg \
+    git \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Upgrade pip
+RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Copy requirements file
+COPY requirements.txt .
+
+# Install project dependencies in two steps to avoid dependency conflicts
+RUN pip3 install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# Copy the rest of the application code
+COPY ./app ./app
+
+# Create necessary directories
+RUN mkdir -p uploads outputs status logs
+
+# Set permissions
+RUN chmod -R 755 /app
+
+# Define the command to run the worker
+CMD ["celery", "-A", "app.core.celery_app", "worker", "--loglevel=info"]

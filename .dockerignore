@@ -1,0 +1,24 @@
+# CTranslate2 klasörü - build context'inde sorun yaratıyor
+app/CTranslate2/
+CTranslate2/
+
+# Diğer gereksiz dosyalar
+.git/
+.gitignore
+README.md
+*.log
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+
+# Test dosyaları
+tests/
+*.test.py
+
+# Geçici dosyalar
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db 

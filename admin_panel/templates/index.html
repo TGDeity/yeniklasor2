@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Processing Admin Panel</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .status-badge {
+            font-size: 0.8em;
+            padding: 0.3em 0.6em;
+        }
+        .progress {
+            height: 20px;
+        }
+        .card {
+            box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+            border: 1px solid rgba(0, 0, 0, 0.125);
+        }
+        .refresh-btn {
+            cursor: pointer;
+        }
+        .system-metric {
+            text-align: center;
+            padding: 1rem;
+        }
+        .metric-value {
+            font-size: 2rem;
+            font-weight: bold;
+        }
+        .metric-label {
+            color: #6c757d;
+            font-size: 0.9rem;
+        }
+        .config-section {
+            background-color: #f8f9fa;
+            border-radius: 0.375rem;
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .resource-card {
+            transition: transform 0.2s;
+        }
+        .resource-card:hover {
+            transform: translateY(-2px);
+        }
+        .gpu-info {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 0.375rem;
+            padding: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">
+                <i class="fas fa-video me-2"></i>
+                Video Processing Admin Panel
+            </a>
+            <div class="navbar-nav ms-auto">
+                <span class="navbar-text">
+                    <i class="fas fa-clock me-1"></i>
+                    <span id="current-time"></span>
+                </span>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+        <!-- Error Alert -->
+        {% if error %}
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            <i class="fas fa-exclamation-triangle me-2"></i>
+            <strong>Error:</strong> {{ error }}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+        {% endif %}
+
+        <!-- System Resources -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="fas fa-server me-2"></i>
+                            System Resources
+                        </h5>
+                        <button class="btn btn-sm btn-outline-primary refresh-btn" onclick="refreshData()">
+                            <i class="fas fa-sync-alt"></i> Refresh
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        {% if system_resources.error %}
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            {{ system_resources.error }}
+                        </div>
+                        {% else %}
+                        <div class="row">
+                            <div class="col-md-3 system-metric">
+                                <div class="metric-value text-primary">{{ system_resources.cpu_percent|default(0)|round(1) }}%</div>
+                                <div class="metric-label">CPU Usage</div>
+                                <small class="text-muted">{{ system_resources.cpu_cores }} cores</small>
+                            </div>
+                            <div class="col-md-3 system-metric">
+                                <div class="metric-value text-info">{{ system_resources.memory_percent|default(0)|round(1) }}%</div>
+                                <div class="metric-label">Memory Usage</div>
+                                <small class="text-muted">{{ system_resources.memory_used_gb|default(0) }}/{{ system_resources.memory_total_gb|default(0) }} GB</small>
+                            </div>
+                            <div class="col-md-3 system-metric">
+                                <div class="metric-value text-success">{{ system_resources.disk_percent|default(0)|round(1) }}%</div>
+                                <div class="metric-label">Disk Usage</div>
+                                <small class="text-muted">{{ system_resources.disk_free_gb|default(0) }} GB free</small>
+                            </div>
+                            <div class="col-md-3 system-metric">
+                                {% if system_resources.gpu and system_resources.gpu.available %}
+                                <div class="metric-value text-success">
+                                    <i class="fas fa-check-circle"></i>
+                                </div>
+                                <div class="metric-label">GPU Available</div>
+                                <small class="text-muted">{{ system_resources.gpu.gpus|length }} GPU(s)</small>
+                                {% else %}
+                                <div class="metric-value text-danger">
+                                    <i class="fas fa-times-circle"></i>
+                                </div>
+                                <div class="metric-label">GPU Not Available</div>
+                                <small class="text-muted">CPU only or error</small>
+                                {% endif %}
+                            </div>
+                        </div>
+                        
+                        <!-- GPU Details -->
+                        {% if system_resources.gpu and system_resources.gpu.available and system_resources.gpu.gpus %}
+                        <div class="row mt-3">
+                            {% for gpu in system_resources.gpu.gpus %}
+                            <div class="col-md-6 mb-3">
+                                <div class="gpu-info">
+                                    <h6><i class="fas fa-microchip me-2"></i>{{ gpu.name }}</h6>
+                                    <div class="row">
+                                        <div class="col-6">
+                                            <small>Memory: {{ gpu.memory_used_mb }}/{{ gpu.memory_total_mb }} MB</small>
+                                            <div class="progress mt-1" style="height: 8px;">
+                                                <div class="progress-bar bg-info" style="width: {{ (gpu.memory_used_mb / gpu.memory_total_mb) * 100 }}%"></div>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <small>Utilization: {{ gpu.utilization_percent }}%</small>
+                                            <div class="progress mt-1" style="height: 8px;">
+                                                <div class="progress-bar bg-warning" style="width: {{ gpu.utilization_percent }}%"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <small class="d-block mt-2">Temperature: {{ gpu.temperature_celsius }}°C</small>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Service Status -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-network-wired me-2"></i>
+                            Service Status
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            {% if service_status.error %}
+                            <div class="alert alert-warning">
+                                <i class="fas fa-exclamation-triangle me-2"></i>
+                                {{ service_status.error }}
+                            </div>
+                            {% else %}
+                            {% for service_name, service_info in service_status.items() %}
+                            <div class="col-md-4 mb-3">
+                                <div class="card resource-card h-100">
+                                    <div class="card-body text-center">
+                                        {% set status_color = 'warning' %}
+                                        {% if service_info.status == 'healthy' %}
+                                            {% set status_color = 'success' %}
+                                        {% elif service_info.status in ['unhealthy', 'unreachable'] %}
+                                            {% set status_color = 'danger' %}
+                                        {% endif %}
+                                        <i class="fas fa-circle text-{{ status_color }} mb-2"></i>
+                                        <h6 class="card-title">{{ service_name|title }}</h6>
+                                        <p class="card-text">
+                                            <span class="badge bg-{{ status_color }}">
+                                                {{ service_info.status }}
+                                            </span>
+                                        </p>
+                                        {% if service_info.response_time_ms %}
+                                        <small class="text-muted">{{ service_info.response_time_ms }}ms</small>
+                                        {% elif service_info.details %}
+                                        <small class="text-muted" title="{{ service_info.details }}">{{ service_info.details|truncate(30) }}</small>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuration Management -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-cogs me-2"></i>
+                            System Configuration
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        {% if config_settings.error %}
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            {{ config_settings.error }}
+                        </div>
+                        {% else %}
+                        <div class="row">
+                            <!-- Timeouts -->
+                            <div class="col-md-6">
+                                <div class="config-section">
+                                    <h6><i class="fas fa-clock me-2"></i>Timeout Settings (seconds)</h6>
+                                    {% for key, value in config_settings.timeouts.items() %}
+                                    <div class="mb-2">
+                                        <label class="form-label">{{ key|title }}: {{ value }}</label>
+                                        <input type="range" class="form-range" min="60" max="3600" value="{{ value }}" 
+                                               onchange="updateConfig('timeouts.{{ key }}', this.value)">
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            
+                            <!-- Resources -->
+                            <div class="col-md-6">
+                                <div class="config-section">
+                                    <h6><i class="fas fa-server me-2"></i>Resource Limits</h6>
+                                    {% for key, value in config_settings.resources.items() %}
+                                    <div class="mb-2">
+                                        <label class="form-label">{{ key|replace('_', ' ')|title }}: {{ value }}</label>
+                                        {% if 'mb' in key %}
+                                        <input type="range" class="form-range" min="100" max="2000" value="{{ value }}" 
+                                               onchange="updateConfig('resources.{{ key }}', this.value)">
+                                        {% elif 'gb' in key %}
+                                        <input type="range" class="form-range" min="1" max="16" value="{{ value }}" 
+                                               onchange="updateConfig('resources.{{ key }}', this.value)">
+                                        {% else %}
+                                        <input type="range" class="form-range" min="1" max="8" value="{{ value }}" 
+                                               onchange="updateConfig('resources.{{ key }}', this.value)">
+                                        {% endif %}
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="row">
+                            <!-- Performance -->
+                            <div class="col-md-6">
+                                <div class="config-section">
+                                    <h6><i class="fas fa-tachometer-alt me-2"></i>Performance Settings</h6>
+                                    {% for key, value in config_settings.performance.items() %}
+                                    <div class="form-check form-switch">
+                                        <input class="form-check-input" type="checkbox" id="{{ key }}" 
+                                               {% if value %}checked{% endif %}
+                                               onchange="updateConfig('performance.{{ key }}', this.checked)">
+                                        <label class="form-check-label" for="{{ key }}">
+                                            {{ key|replace('_', ' ')|title }}
+                                        </label>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            
+                            <!-- Cleanup -->
+                            <div class="col-md-6">
+                                <div class="config-section">
+                                    <h6><i class="fas fa-broom me-2"></i>Cleanup Settings</h6>
+                                    {% for key, value in config_settings.cleanup.items() %}
+                                    <div class="mb-2">
+                                        {% if key == 'auto_cleanup_temp_files' %}
+                                        <div class="form-check form-switch">
+                                            <input class="form-check-input" type="checkbox" id="{{ key }}" 
+                                                   {% if value %}checked{% endif %}
+                                                   onchange="updateConfig('cleanup.{{ key }}', this.checked)">
+                                            <label class="form-check-label" for="{{ key }}">
+                                                {{ key|replace('_', ' ')|title }}
+                                            </label>
+                                        </div>
+                                        {% else %}
+                                        <label class="form-label">{{ key|replace('_', ' ')|title }}: {{ value }}</label>
+                                        <input type="range" class="form-range" min="300" max="86400" value="{{ value }}" 
+                                               onchange="updateConfig('cleanup.{{ key }}', this.value)">
+                                        {% endif %}
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Resource Limits Section -->
+                        <div class="config-section">
+                            <label for="max_file_size_mb_resource">Resource Limits: Max File Size Mb</label>
+                            <select id="max_file_size_mb_resource" onchange="updateConfig('resources.max_file_size_mb', this.value)">
+                                <option value="10" {% if config_settings.resources.max_file_size_mb == 10 %}selected{% endif %}>10MB</option>
+                                <option value="35" {% if config_settings.resources.max_file_size_mb == 35 %}selected{% endif %}>35MB</option>
+                                <option value="50" {% if config_settings.resources.max_file_size_mb == 50 %}selected{% endif %}>50MB</option>
+                                <option value="100" {% if config_settings.resources.max_file_size_mb == 100 %}selected{% endif %}>100MB</option>
+                                <option value="300" {% if config_settings.resources.max_file_size_mb == 300 %}selected{% endif %}>300MB</option>
+                                <option value="400" {% if config_settings.resources.max_file_size_mb == 400 %}selected{% endif %}>400MB</option>
+                                <option value="500" {% if config_settings.resources.max_file_size_mb == 500 %}selected{% endif %}>500MB</option>
+                                <option value="700" {% if config_settings.resources.max_file_size_mb == 700 %}selected{% endif %}>700MB</option>
+                                <option value="1024" {% if config_settings.resources.max_file_size_mb == 1024 %}selected{% endif %}>1GB</option>
+                                <option value="2048" {% if config_settings.resources.max_file_size_mb == 2048 %}selected{% endif %}>2GB</option>
+                                <option value="3072" {% if config_settings.resources.max_file_size_mb == 3072 %}selected{% endif %}>3GB</option>
+                                <option value="4096" {% if config_settings.resources.max_file_size_mb == 4096 %}selected{% endif %}>4GB</option>
+                            </select>
+                        </div>
+                        
+                        <div class="text-center mt-3">
+                            <button class="btn btn-primary" onclick="triggerCleanup()">
+                                <i class="fas fa-broom me-2"></i>Trigger Manual Cleanup
+                            </button>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Storage Information -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-hdd me-2"></i>
+                            Storage Information
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        {% if storage_info.error %}
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            {{ storage_info.error }}
+                        </div>
+                        {% else %}
+                        <div class="row">
+                            {% for dir_name, dir_info in storage_info.items() %}
+                            <div class="col-md-3 mb-3">
+                                <div class="card resource-card">
+                                    <div class="card-body text-center">
+                                        <i class="fas fa-folder text-primary mb-2"></i>
+                                        <h6 class="card-title">{{ dir_name|title }}</h6>
+                                        <p class="card-text">
+                                            <strong>{{ dir_info.size_mb }} MB</strong><br>
+                                            <small class="text-muted">{{ dir_info.file_count }} files</small>
+                                        </p>
+                                        {% if not dir_info.exists %}
+                                        <span class="badge bg-warning">Not Found</span>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Performance Metrics -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-chart-line me-2"></i>
+                            Performance Metrics
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        {% if performance_metrics.error %}
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            {{ performance_metrics.error }}
+                        </div>
+                        {% else %}
+                        <div class="row">
+                            <div class="col-md-3 system-metric">
+                                <div class="metric-value text-primary">{{ performance_metrics.upload_count|default(0) }}</div>
+                                <div class="metric-label">Uploads</div>
+                            </div>
+                            <div class="col-md-3 system-metric">
+                                <div class="metric-value text-info">{{ performance_metrics.processing_count|default(0) }}</div>
+                                <div class="metric-label">Processing</div>
+                            </div>
+                            <div class="col-md-3 system-metric">
+                                <div class="metric-value text-success">{{ performance_metrics.success_count|default(0) }}</div>
+                                <div class="metric-label">Success</div>
+                            </div>
+                            <div class="col-md-3 system-metric">
+                                <div class="metric-value text-danger">{{ performance_metrics.error_count|default(0) }}</div>
+                                <div class="metric-label">Errors</div>
+                            </div>
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Active Tasks -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-tasks me-2"></i>
+                            Active Tasks
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        {% if active_tasks.error %}
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle me-2"></i>
+                            {{ active_tasks.error }}
+                        </div>
+                        {% elif active_tasks.active_tasks %}
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Task ID</th>
+                                        <th>Name</th>
+                                        <th>Worker</th>
+                                        <th>Started</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for task in active_tasks.active_tasks %}
+                                    <tr>
+                                        <td><code>{{ task.task_id[:8] }}...</code></td>
+                                        <td>{{ task.name }}</td>
+                                        <td>{{ task.worker }}</td>
+                                        <td>{{ task.time_start|default('Unknown') }}</td>
+                                        <td>
+                                            <button class="btn btn-sm btn-danger" onclick="cancelTask('{{ task.task_id }}')">
+                                                <i class="fas fa-stop"></i> Cancel
+                                            </button>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                        {% else %}
+                        <p class="text-muted">No active tasks</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Video Processing Status -->
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="mb-0">
+                            <i class="fas fa-video me-2"></i>
+                            Video Processing Status
+                        </h5>
+                    </div>
+                    <div class="card-body">
+                        {% if videos %}
+                        <div class="table-responsive">
+                            <table class="table table-hover">
+                                <thead>
+        <tr>
+            <th>Video ID</th>
+                                        <th>Status</th>
+                                        <th>Progress</th>
+                                        <th>Modified</th>
+                                        <th>Actions</th>
+        </tr>
+                                </thead>
+                                <tbody>
+                                    {% for video in videos %}
+        <tr>
+                                        <td><code>{{ video.video_id[:8] }}...</code></td>
+                                        <td>
+                                            <span class="badge {% if video.status == 'completed' %}bg-success{% elif video.status == 'processing' %}bg-warning{% elif video.status == 'failed' %}bg-danger{% else %}bg-secondary{% endif %}">
+                                                {{ video.status|default('unknown') }}
+                                            </span>
+                                        </td>
+            <td>
+                                            {% if video.progress %}
+                                            <div class="progress" style="height: 20px;">
+                                                <div class="progress-bar" style="width: {{ video.progress }}%">{{ video.progress }}%</div>
+                                            </div>
+                {% else %}
+                                            <span class="text-muted">-</span>
+                                            {% endif %}
+                                        </td>
+                                        <td>{{ video.modified }}</td>
+                                        <td>
+                                            {% if video.status == 'completed' %}
+                                            <a href="{{ api_url }}/status/download/{{ video.video_id }}" class="btn btn-sm btn-success">
+                                                <i class="fas fa-download"></i> Download
+                                            </a>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+                                </tbody>
+    </table>
+                        </div>
+                        {% else %}
+                        <p class="text-muted">No videos found</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        var api_url = "{{ api_url }}";
+        // Update current time
+        function updateTime() {
+            const now = new Date();
+            document.getElementById('current-time').textContent = now.toLocaleString();
+        }
+        
+        // Refresh data
+        function refreshData() {
+            location.reload();
+        }
+        
+        // Cancel task
+        function cancelTask(taskId) {
+            if (confirm('Are you sure you want to cancel this task?')) {
+                fetch(`/api/tasks/${taskId}`, {
+                    method: 'DELETE'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.message) {
+                        alert(data.message);
+                        location.reload();
+                    } else {
+                        alert('Error: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    alert('Error: ' + error);
+                });
+            }
+        }
+        
+        // Update configuration
+        function updateConfig(settingPath, value) {
+            fetch(api_url + '/config/update', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    setting_path: settingPath,
+                    value: value
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.message) {
+                    console.log(data.message);
+                    location.reload();
+                } else {
+                    console.error('Error: ' + data.error);
+                }
+            })
+            .catch(error => {
+                console.error('Error: ' + error);
+            });
+        }
+        
+        // Trigger cleanup
+        function triggerCleanup() {
+            if (confirm('Are you sure you want to trigger manual cleanup?')) {
+                fetch('/api/system/cleanup', {
+                    method: 'POST'
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.message) {
+                        alert(data.message);
+                        location.reload();
+                    } else {
+                        alert('Error: ' + data.error);
+                    }
+                })
+                .catch(error => {
+                    alert('Error: ' + error);
+                });
+            }
+        }
+        
+        // Auto-refresh every 30 seconds
+        setInterval(updateTime, 1000);
+        setInterval(refreshData, 30000);
+        
+        // Initial time update
+        updateTime();
+    </script>
+</body>
+</html>
